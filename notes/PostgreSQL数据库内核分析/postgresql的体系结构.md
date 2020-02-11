@@ -122,3 +122,51 @@ BKI文件仅用于初始化数据集簇。
 9. 打印操作成功等相关信息，退出。
 
 initdb是PostgreSQL中一个独立的程序，它的主要工作就是对数据集簇进行初始化，创建模板数据库和系统表，并向系统表中插入初始元组。在这以后，用户创建各种数据库、表、视图、索引等数据库对象和进行其他操作时，都是在模板数据库和系统表的基础上进行的。
+
+### 系统数据库
+
+PostgreSQL的数据集簇默认包含三个系统数据库：template1、template0和postgres。
+
+template1和template0数据库用于创建数据库。PostgreSQL中采用从模板数据库复制的方式来创建新的数据库，在创建数据库的命令中可以用“-T”选项来指定以哪一个数据库为模板来创建新数据库。
+
+template1数据库是创建数据库命令默认的模板。template1是可以修改的，如果对template1进行了修改，那么在修改之后创建的用户数据库中也能体现出这些修改的结果。
+
+由于template1的内容可以被修改，为了满足用户创建一个“干净”的数据库的需求，PostgreSQL提供了template0数据库作最初始的备份数据库。
+
+postgres数据库用于给初试用户提供一个可连接的数据库，就像Linux系统中一个用户的主目录一样。
+
+## PostgreSQL进程结构
+
+PostgreSQL系统的主要功能都集中于postgres程序。
+
+PostgreSQL使用一种专用服务器进程体系结构，其中，最主要的两个进程就是守护进程Postmaster和服务进程Postgres。守护进程Postmaster负责整个系统的启动和关闭。它监听并接受客户端的连接请求，为其分配服务进程Postgres。服务进程Postgres接受并执行客户端发送的命令。它在底层模块（如存储、事务管理、索引等）之上调用各个主要的功能模块（如编译器、优化器、执行器等），完成客户端的各种数据库操作，并返回执行结果。
+
+守护进程Postmaster在完成基本运行环境初始化、创建接受用户请求的监听端口后，顺序启动如下系统辅助进程：SysLogger（系统日志进程）、PgStat（统计数据收集进程）、AutoVacuum（系统自动清理进程）。在守护进程Postmaster进入到循环监听中是启动如下进程：BgWriter（后台写进程）、WalWriter（预写式日志写进程）、PgArch（预写式日志归档进程）。
+
+PostgreSQL采用C/S模式，系统为每个客户端分配一个服务进程。
+
+## 守护进程Postmaster
+
+完成数据集簇初始化后，用户可以启动一个数据库实例来运行数据库管理系统，多用户模式下一个数据库实例由数据库服务器守护进程Postmaster来管理。它是一个运行在服务器上的总控进程，负责整个系统的启动和关闭，并且在服务进程出现错误时完成系统的恢复。它管理数据库文件、监听并接受来自客户端的的连接请求，并且为客户端连接请求fork一个Postgres服务进程，来代表客户端在数据库上执行各种命令。同时Postmaster还管理与数据库运行相关的辅助进程。
+
+### 初始化内存上下文
+
+程序首先调用MemoryContextInit创建TopMemoryContext和ErrorContext。然后调用AllocSetContextCreate以TopMemoryContext为根节点创建PostmasterContext，最后将全局指针CurrentMemoryContext指向PostmasterContext。这些内存上下文含义如下：
+
+* TopMemoryContext：在TopMemoryContext中分配的内存直到系统退出时才会释放。它是所有内存上下文的树根。
+* ErrorContext：这是错误恢复处理的永久性内存内存环境，恢复完毕则重设。
+* PostmasterContext：这是Postmaster正常工作的内存环境，由它通过fork函数产生的子进程将会删除这个环境。
+  
+### 配置参数
+
+GUC（Grand Unified Configuration）模块实现了多种数据类型（目前有boolean、int、float、string四种）的变量配置。
+
+参数共有六中类型：
+
+* PGC_INTERNAL：参数只能通过内部进程设定，用户不能设定。
+* PGC_POSTMASTER：参数只能在Postmaster启动时通过读配置文件或处理命令行参数来配置。
+* PGC_SIGUP：参数只能在Postmaster启动时配置，或当我们改变了配置文件并发送信号SIGHUP通知Postmaster或Postgres的时候进行配置。
+* PGC_BACKEND：参数只能在Postmaster启动时读配置文件设置，或由客户端在进行连接请求时设置。已经启动的后台进程会忽略此类参数的变化。
+* PGC_USERSET：可以在任何时候配置。
+* PGC_SUSET：参数只能在Postmaster启动时或由超级用户通过SQL语言（SET命令）进行设置。
+  
